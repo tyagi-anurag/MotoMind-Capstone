@@ -65,3 +65,8 @@ class MapsTool:
             f"2. Raju's Bike Point (4.2⭐) - 0.5km away\n"
             f"3. Quick Fix Garage (3.8⭐) - 1.2km away"
         )
+    
+if __name__ == "__main__":
+# Simple test to see if your key works
+    tool = MapsTool()
+    print(tool.find_nearby_mechanic("Indiranagar, Bangalore", "Royal Enfield"))

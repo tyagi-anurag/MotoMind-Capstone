@@ -205,3 +205,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# Security
+.env
+.env.local
+
+# Python Cache (Good practice)
+__pycache__/
+*.pyc
