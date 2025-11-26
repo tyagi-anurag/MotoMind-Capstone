@@ -2,3 +2,4 @@ google-adk
 google-generativeai
 streamlit
 python-dotenv
+Pillow
