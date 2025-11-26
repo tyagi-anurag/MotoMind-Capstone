@@ -211,6 +211,21 @@ __marimo__/
 .env
 .env.local
 
-# Python Cache (Good practice)
+# Python junk
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
