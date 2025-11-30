@@ -17,7 +17,8 @@ export default function MotoMindUI() {
   // ---------------------------------------------------------
   // 🔧 CONFIGURATION: PASTE YOUR DEPLOYED BACKEND URL HERE
   // ---------------------------------------------------------
-  const BACKEND_URL = "https://motomind-backend.onrender.com"; //   <--- CHANGE THIS TO YOUR RENDER/CLOUD RUN URL
+  // NO localhost here!
+const BACKEND_URL = "https://motomind-backend.onrender.com"; //   <--- CHANGE THIS TO YOUR RENDER/CLOUD RUN URL
   // Example: const BACKEND_URL = "https://motomind-backend-xp2z.onrender.com";
   // ---------------------------------------------------------
 
