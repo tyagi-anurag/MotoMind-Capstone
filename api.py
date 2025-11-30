@@ -11,6 +11,7 @@ from google.genai import types
 import shutil
 import os
 import traceback
+import uuid # Import UUID to generate fresh sessions
 
 app = FastAPI()
 
@@ -18,8 +19,9 @@ app = FastAPI()
 try:
     print("🔄 System Startup...")
     motomind = MotoMindAgent()
+    # Initialize Runner
     runner = InMemoryRunner(agent=motomind.agent, app_name="agents")
-    print("✅ MotoMind Ready.")
+    print("✅ MotoMind Brain Loaded.")
 except Exception as e:
     print("🔥 FATAL STARTUP ERROR:")
     traceback.print_exc()
@@ -35,27 +37,41 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
 
-async def execute_agent_turn(prompt_text: str):
-    response_text = ""
-    user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
-    async for event in runner.run_async(user_id="web_user", session_id="live_session", new_message=user_msg):
-        if event.content and event.content.parts:
-            for part in event.content.parts:
-                if hasattr(part, 'text') and part.text:
-                    response_text = part.text
-    return response_text
-
 async def run_agent_safe(prompt_text: str):
+    response_text = ""
+    APP_NAME = "agents"
+    USER_ID = "web_user"
+    # FIX: We use a fixed session ID, but we force-create it if it's missing.
+    SESSION_ID = "live_session" 
+    
     try:
-        return await execute_agent_turn(prompt_text)
+        # 1. Check if session exists, if not, create it.
+        # This logic runs EVERY time, ensuring the session is never "not found".
+        try:
+            await runner.session_service.get_session(APP_NAME, USER_ID, SESSION_ID)
+        except Exception:
+            print(f"⚠️ Session '{SESSION_ID}' missing (server restart?). Creating new one...")
+            await runner.session_service.create_session(APP_NAME, USER_ID, SESSION_ID)
+
+        # 2. Run the Agent
+        user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
+        
+        async for event in runner.run_async(
+            user_id=USER_ID, 
+            session_id=SESSION_ID, 
+            new_message=user_msg
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        response_text = part.text
+                        
+        return response_text
+
     except Exception as e:
-        if "Session not found" in str(e):
-            print(f"ℹ️ Re-creating session...")
-            await runner.session_service.create_session(app_name="agents", user_id="web_user", session_id="live_session")
-            return await execute_agent_turn(prompt_text)
-        else:
-            print(f"❌ ERROR: {e}")
-            return "System Error. Please check logs."
+        print(f"❌ AGENT ERROR: {e}")
+        traceback.print_exc()
+        return "I'm rebooting my brain. Please try asking again."
 
 @app.get("/")
 def health_check():
@@ -77,8 +93,9 @@ async def find_mechanics(request: ChatRequest):
             bike = parts[1].replace("Bike:", "").strip()
         tool = MapsTool()
         return {"response": tool.find_nearby_mechanic(location, bike)}
-    except Exception:
-        return {"response": "Error finding mechanics."}
+    except Exception as e:
+        print(f"❌ Maps Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/plan_trip")
 async def plan_trip(request: ChatRequest):
@@ -86,10 +103,11 @@ async def plan_trip(request: ChatRequest):
         data = request.message.split("|")
         tool = TravelTool()
         plan = tool.plan_trip(data[0], data[1], data[2], int(data[3]), int(data[4]))
-        link = tool.get_map_link(data[0], data[1])
-        return {"response": f"{plan}\n\n### 🗺️ Navigation\n👉 **[Click to Open Route in Google Maps]({link})**"}
-    except Exception:
-        return {"response": "Error planning trip."}
+        map_link = tool.get_map_link(data[0], data[1])
+        return {"response": f"{plan}\n\n### 🗺️ Navigation\n👉 **[Click to Open Route in Google Maps]({map_link})**"}
+    except Exception as e:
+        print(f"❌ Trip Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/diagnose/audio")
 async def diagnose_audio(file: UploadFile = File(...), message: str = Form(...)):
@@ -98,17 +116,7 @@ async def diagnose_audio(file: UploadFile = File(...), message: str = Form(...))
         with open(temp_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
         tool = AudioTool()
         raw = tool.diagnose_sound(temp_path)
-        
-        # FIXED PROMPT: Force the AI to own the data
-        final = f"""
-        INTERNAL DATA FROM YOUR AUDIO TOOL: "{raw}"
-        USER QUESTION: "{message}"
-        
-        INSTRUCTIONS: 
-        1. The data above comes from YOUR EARS (the Audio Tool). Do NOT compliment the analysis. 
-        2. Present the diagnosis to the user as YOUR professional opinion. 
-        3. Be direct and helpful.
-        """
+        final = f"Audio Analysis: {raw}\nUser Question: {message}\nExplain this."
         return {"response": await run_agent_safe(final)}
     finally:
         if os.path.exists(temp_path): os.remove(temp_path)
@@ -120,17 +128,7 @@ async def diagnose_vision(file: UploadFile = File(...), message: str = Form(...)
         with open(temp_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
         tool = VisionTool()
         raw = tool.scan_bike(temp_path)
-        
-        # FIXED PROMPT: Force the AI to own the data
-        final = f"""
-        INTERNAL DATA FROM YOUR VISION TOOL: "{raw}"
-        USER QUESTION: "{message}"
-        
-        INSTRUCTIONS: 
-        1. The data above comes from YOUR EYES (the Vision Tool). Do NOT compliment the analysis.
-        2. Present the findings to the user as YOUR professional opinion.
-        3. Format nicely with Markdown.
-        """
+        final = f"Visual Scan: {raw}\nUser Question: {message}\nExplain this."
         return {"response": await run_agent_safe(final)}
     finally:
         if os.path.exists(temp_path): os.remove(temp_path)
