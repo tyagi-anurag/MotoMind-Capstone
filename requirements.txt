@@ -1,5 +1,8 @@
-google-adk
+fastapi
+uvicorn
+python-multipart
 google-generativeai
-streamlit
+google-adk
 python-dotenv
-Pillow
+requests
+duckduckgo-search
