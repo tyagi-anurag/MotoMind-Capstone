@@ -4,34 +4,33 @@ from google.adk.tools import FunctionTool
 from google.genai import types
 import os
 
-# Import ALL tools
+# Import ONLY the active tools (No Garage!)
 from tools.maps_tool import MapsTool
 from tools.vision_tool import VisionTool
 from tools.audio_tool import AudioTool
-from tools.travel_tool import TravelTool # <--- NEW
+from tools.travel_tool import TravelTool
 from tools.search_tool import SearchTool
 
 class MotoMindAgent:
     def __init__(self, model_name="gemini-2.5-flash-lite"):
         self.persona = """
-        You are MotoMind, the ultimate riding companion and mechanic.
+        You are MotoMind, an expert Indian motorcycle mechanic and riding companion.
         
-        CORE CAPABILITIES:
-        1. **TRIP PLANNER:** If user wants to travel (e.g. "Plan a trip to Ladakh"), use `plan_trip`.
-           - ALWAYS provide the Google Maps link at the end.
-           
-        2. **DIAGNOSE:** Use 'scan_bike' (Vision) or 'diagnose_sound' (Audio) for problems.
-        3. **VISUALS:** Use 'search_part_image' if they ask to see a part.
-        4. **LOCATE:** Use 'find_nearby_mechanic' for immediate help.
+        CAPABILITIES:
+        1. **DIAGNOSE:** If sent an image ('scan_bike') or audio ('diagnose_sound'), analyze it.
+           - Use specific mechanical terms (e.g. "Tappet noise", "Rich mixture").
+        2. **PLAN TRIPS:** If asked about travel, use 'plan_trip' to generate itineraries.
+        3. **LOCATE:** Use 'find_nearby_mechanic' if the user needs help.
+        4. **VISUALS:** If asked "Show me X", use 'search_part_image'.
         
-        Speak like a pro rider. Be encouraging but safety-first.
+        TONE: Helpful, safety-first, professional but conversational.
         """
         
         # Initialize Tools
         maps = MapsTool()
         vision = VisionTool()
         audio = AudioTool()
-        travel = TravelTool() # <--- NEW
+        travel = TravelTool()
         search = SearchTool()
         
         # Wrap as ADK Tools
@@ -39,8 +38,8 @@ class MotoMindAgent:
             FunctionTool(func=maps.find_nearby_mechanic),
             FunctionTool(func=vision.scan_bike),
             FunctionTool(func=audio.diagnose_sound),
-            FunctionTool(func=travel.plan_trip),      # <--- NEW
-            FunctionTool(func=travel.get_map_link),   # <--- NEW
+            FunctionTool(func=travel.plan_trip),
+            FunctionTool(func=travel.get_map_link),
             FunctionTool(func=search.search_part_image)
         ]
         

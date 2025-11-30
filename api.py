@@ -11,20 +11,27 @@ from google.genai import types
 import shutil
 import os
 import traceback
-import uuid # Import UUID to generate fresh sessions
 
 app = FastAPI()
+
+# Initialize variable to None so we can check it later
+runner = None
 
 # --- GLOBAL INITIALIZATION ---
 try:
     print("🔄 System Startup...")
     motomind = MotoMindAgent()
-    # Initialize Runner
+    
+    # Initialize Runner WITHOUT session_service (Auto-managed in newer ADK)
     runner = InMemoryRunner(agent=motomind.agent, app_name="agents")
-    print("✅ MotoMind Brain Loaded.")
+    
+    print("✅ MotoMind Brain Loaded Successfully.")
+
 except Exception as e:
-    print("🔥 FATAL STARTUP ERROR:")
+    print("\n\n🔥 FATAL STARTUP ERROR: The Agent failed to load.")
+    print(f"Error Details: {e}")
     traceback.print_exc()
+    print("--------------------------------------------------\n")
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,22 +45,24 @@ class ChatRequest(BaseModel):
     message: str
 
 async def run_agent_safe(prompt_text: str):
+    # Safety Check: Did the runner actually start?
+    if runner is None:
+        return "⚠️ System Error: The AI Brain failed to start. Check the backend terminal logs for the specific error."
+
     response_text = ""
     APP_NAME = "agents"
     USER_ID = "web_user"
-    # FIX: We use a fixed session ID, but we force-create it if it's missing.
-    SESSION_ID = "live_session" 
+    SESSION_ID = "live_session"
     
     try:
-        # 1. Check if session exists, if not, create it.
-        # This logic runs EVERY time, ensuring the session is never "not found".
+        # 1. Ensure Session Exists
         try:
             await runner.session_service.get_session(APP_NAME, USER_ID, SESSION_ID)
         except Exception:
-            print(f"⚠️ Session '{SESSION_ID}' missing (server restart?). Creating new one...")
+            # Create if missing
             await runner.session_service.create_session(APP_NAME, USER_ID, SESSION_ID)
 
-        # 2. Run the Agent
+        # 2. Run Agent
         user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
         
         async for event in runner.run_async(
@@ -69,12 +78,14 @@ async def run_agent_safe(prompt_text: str):
         return response_text
 
     except Exception as e:
-        print(f"❌ AGENT ERROR: {e}")
+        print(f"❌ RUNTIME ERROR: {e}")
         traceback.print_exc()
-        return "I'm rebooting my brain. Please try asking again."
+        return f"I encountered an error: {str(e)}"
 
 @app.get("/")
 def health_check():
+    if runner is None:
+        return {"status": "CRITICAL - Runner Failed to Load"}
     return {"status": "MotoMind Brain is Active"}
 
 @app.post("/chat")
@@ -85,14 +96,17 @@ async def chat(request: ChatRequest):
 async def find_mechanics(request: ChatRequest):
     try:
         content = request.message
+        # Parse simple context string
         location = "India"
         bike = "Motorcycle"
         if "|" in content:
             parts = content.split("|")
             location = parts[0].replace("User Location:", "").strip()
             bike = parts[1].replace("Bike:", "").strip()
+            
         tool = MapsTool()
-        return {"response": tool.find_nearby_mechanic(location, bike)}
+        result = tool.find_nearby_mechanic(location, bike)
+        return {"response": result}
     except Exception as e:
         print(f"❌ Maps Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -111,24 +125,28 @@ async def plan_trip(request: ChatRequest):
 
 @app.post("/diagnose/audio")
 async def diagnose_audio(file: UploadFile = File(...), message: str = Form(...)):
+    if runner is None: return {"response": "System Error: Agent not running."}
+    
     temp_path = f"temp_{file.filename}"
     try:
         with open(temp_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
         tool = AudioTool()
         raw = tool.diagnose_sound(temp_path)
-        final = f"Audio Analysis: {raw}\nUser Question: {message}\nExplain this."
+        final = f"Audio Analysis Result: {raw}\nUser Question: {message}\nExplain this."
         return {"response": await run_agent_safe(final)}
     finally:
         if os.path.exists(temp_path): os.remove(temp_path)
 
 @app.post("/diagnose/vision")
 async def diagnose_vision(file: UploadFile = File(...), message: str = Form(...)):
+    if runner is None: return {"response": "System Error: Agent not running."}
+
     temp_path = f"temp_{file.filename}"
     try:
         with open(temp_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
         tool = VisionTool()
         raw = tool.scan_bike(temp_path)
-        final = f"Visual Scan: {raw}\nUser Question: {message}\nExplain this."
+        final = f"Visual Scan Result: {raw}\nUser Question: {message}\nAnswer the user."
         return {"response": await run_agent_safe(final)}
     finally:
         if os.path.exists(temp_path): os.remove(temp_path)
