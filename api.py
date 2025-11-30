@@ -14,7 +14,7 @@ import traceback
 
 app = FastAPI()
 
-# Initialize variable to None so we can check it later
+# Initialize runner globally
 runner = None
 
 # --- GLOBAL INITIALIZATION ---
@@ -22,14 +22,15 @@ try:
     print("🔄 System Startup...")
     motomind = MotoMindAgent()
     
-    # Initialize Runner WITHOUT session_service (Auto-managed in newer ADK)
+    # Initialize Runner
+    # We rely on the runner to handle session creation on the first call.
     runner = InMemoryRunner(agent=motomind.agent, app_name="agents")
     
     print("✅ MotoMind Brain Loaded Successfully.")
 
 except Exception as e:
-    print("\n\n🔥 FATAL STARTUP ERROR: The Agent failed to load.")
-    print(f"Error Details: {e}")
+    print("\n\n🔥 FATAL STARTUP ERROR: The AI Agent failed to load.")
+    print(f"ERROR: {e}")
     traceback.print_exc()
     print("--------------------------------------------------\n")
 
@@ -45,28 +46,20 @@ class ChatRequest(BaseModel):
     message: str
 
 async def run_agent_safe(prompt_text: str):
-    # Safety Check: Did the runner actually start?
+    # CRITICAL: Check if the runner failed to load on startup
     if runner is None:
-        return "⚠️ System Error: The AI Brain failed to start. Check the backend terminal logs for the specific error."
+        return "⚠️ SYSTEM ERROR: AI Brain failed to initialize. Check Render Environment Variables (API Key)."
 
     response_text = ""
-    APP_NAME = "agents"
-    USER_ID = "web_user"
-    SESSION_ID = "live_session"
+    SESSION_ID = "live_session" 
     
     try:
-        # 1. Ensure Session Exists
-        try:
-            await runner.session_service.get_session(APP_NAME, USER_ID, SESSION_ID)
-        except Exception:
-            # Create if missing
-            await runner.session_service.create_session(APP_NAME, USER_ID, SESSION_ID)
-
-        # 2. Run Agent
+        # RUN THE AGENT. The runner is designed to handle session creation automatically
+        # if the session_id is new or lost. This bypasses the fragile explicit call.
         user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
         
         async for event in runner.run_async(
-            user_id=USER_ID, 
+            user_id="web_user", 
             session_id=SESSION_ID, 
             new_message=user_msg
         ):
@@ -78,14 +71,13 @@ async def run_agent_safe(prompt_text: str):
         return response_text
 
     except Exception as e:
+        # Generic Catch for Runtime Errors (e.g., model disconnect)
         print(f"❌ RUNTIME ERROR: {e}")
         traceback.print_exc()
-        return f"I encountered an error: {str(e)}"
+        return "I'm rebooting my brain. Please try asking again."
 
 @app.get("/")
 def health_check():
-    if runner is None:
-        return {"status": "CRITICAL - Runner Failed to Load"}
     return {"status": "MotoMind Brain is Active"}
 
 @app.post("/chat")
@@ -96,7 +88,6 @@ async def chat(request: ChatRequest):
 async def find_mechanics(request: ChatRequest):
     try:
         content = request.message
-        # Parse simple context string
         location = "India"
         bike = "Motorcycle"
         if "|" in content:
