@@ -16,6 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the app
 COPY . .
 
-# Use shell form to access the PORT environment variable correctly
-# This fixes the "failed to listen" error
-CMD uvicorn api:app --host 0.0.0.0 --port ${PORT:-8080}
+# Expose port 8080 (Cloud Run standard)
+EXPOSE 8080
+
+# Run the app using Uvicorn
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8080"]
