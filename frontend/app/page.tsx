@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mic, Camera, Send, Activity, X, MapPin, Wrench, Map, AlertTriangle, User, Bike, ArrowRight, Navigation, Fuel, Menu } from "lucide-react";
 import axios from "axios";
@@ -14,9 +14,15 @@ type Message = {
 };
 
 export default function MotoMindUI() {
+  // ---------------------------------------------------------
+  // 🔧 CONFIGURATION: PASTE YOUR DEPLOYED BACKEND URL HERE
+  // ---------------------------------------------------------
+  const BACKEND_URL = "http://127.0.0.1:8000"; // <--- CHANGE THIS TO YOUR RENDER/CLOUD RUN URL
+  // Example: const BACKEND_URL = "https://motomind-backend-xp2z.onrender.com";
+  // ---------------------------------------------------------
+
   // --- STATE ---
   const [activeTab, setActiveTab] = useState("chat");
-  // Updated State type to use our new Message interface
   const [messages, setMessages] = useState<Message[]>([
     { role: "agent", content: "I am MotoMind. I can see, hear, and plan your ride. \n\n**How can I help?**" }
   ]);
@@ -107,14 +113,13 @@ export default function MotoMindUI() {
   const sendMessage = async () => {
     if (!input && !attachedFile) return;
 
-    // --- RESTORED: Create URL for preview ---
     const attachmentUrl = attachedFile ? URL.createObjectURL(attachedFile) : undefined;
     const attachmentType = fileType || undefined;
 
     const userMsg: Message = { 
         role: "user", 
         content: input || (attachedFile ? `[Uploaded ${fileType}]` : "..."),
-        attachmentUrl, // Pass the URL to the message
+        attachmentUrl, 
         attachmentType
     };
 
@@ -140,11 +145,13 @@ export default function MotoMindUI() {
         formData.append("message", contextPrompt);
         
         const endpoint = currentType === "audio" ? "diagnose/audio" : "diagnose/vision";
-        const res = await axios.post(`http://127.0.0.1:8000/${endpoint}`, formData);
+        // UPDATED TO USE VARIABLE
+        const res = await axios.post(`${BACKEND_URL}/${endpoint}`, formData);
         responseText = res.data.response;
       } else {
         const contextPrompt = `[Context: User: ${userName} | Location: ${userLocation} | Bike: ${bikeModel}] ${currentInput}`;
-        const res = await axios.post("http://127.0.0.1:8000/chat", { message: contextPrompt });
+        // UPDATED TO USE VARIABLE
+        const res = await axios.post(`${BACKEND_URL}/chat`, { message: contextPrompt });
         responseText = res.data.response;
       }
 
@@ -162,7 +169,8 @@ export default function MotoMindUI() {
     setMechanicsResult("");
     try {
       const payload = `User Location: ${userLocation} | Bike: ${bikeModel}`;
-      const res = await axios.post("http://127.0.0.1:8000/find_mechanics", { message: payload });
+      // UPDATED TO USE VARIABLE
+      const res = await axios.post(`${BACKEND_URL}/find_mechanics`, { message: payload });
       setMechanicsResult(res.data.response);
     } catch (error) {
       setMechanicsResult("Could not search for mechanics at this time.");
@@ -270,7 +278,15 @@ export default function MotoMindUI() {
         <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-cyan-900/20 rounded-full blur-[120px]" />
       </div>
 
-      {/* --- SIDEBAR (Responsive) --- */}
+      {/* --- MOBILE OVERLAY --- */}
+      {isSidebarOpen && (
+        <div 
+            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
+            onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* --- SIDEBAR --- */}
       <aside className={`
         fixed md:relative inset-y-0 left-0 z-40 w-80 bg-[#0a0a0a] md:bg-black/40 backdrop-blur-xl border-r border-white/10 p-6 flex flex-col gap-6 transition-transform duration-300 ease-in-out
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
@@ -329,13 +345,18 @@ export default function MotoMindUI() {
           </div>
         </div>
 
-        
+        <div className="mt-auto pt-6 border-t border-white/10">
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <Activity size={12} className="text-green-500" />
+            <span>Systems Operational</span>
+          </div>
+        </div>
       </aside>
 
       {/* --- MAIN CONTENT --- */}
       <div className="flex-1 flex flex-col relative z-10 h-screen w-full">
         
-        {/* TOP TABS (Scrollable) */}
+        {/* TOP TABS */}
         <header className="px-4 md:px-6 py-4 border-b border-white/5 flex items-center gap-4 md:gap-6 bg-black/20 backdrop-blur-sm overflow-x-auto scrollbar-hide">
           <button onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 text-gray-400 hover:text-white transition-colors">
             <Menu size={24} />
@@ -381,7 +402,7 @@ export default function MotoMindUI() {
                         ? "bg-cyan-900/30 border-cyan-500/30 rounded-tr-sm text-cyan-50" 
                         : "bg-white/5 border-white/10 rounded-tl-sm text-gray-200"
                     }`}>
-                      {/* --- RESTORED: DISPLAY ATTACHMENTS IN CHAT --- */}
+                      {/* --- DISPLAY ATTACHMENTS --- */}
                       {msg.attachmentUrl && msg.attachmentType === 'vision' && (
                         <img src={msg.attachmentUrl} alt="Upload" className="rounded-lg max-h-64 mb-3 border border-white/10" />
                       )}
@@ -481,7 +502,8 @@ export default function MotoMindUI() {
                             const p = (document.getElementById("trip-people") as HTMLInputElement).value || "1";
                             try {
                                 const payload = `${s}|${d}|${b}|${days}|${p}`;
-                                const res = await axios.post("http://127.0.0.1:8000/plan_trip", { message: payload });
+                                // UPDATED TO USE VARIABLE
+                                const res = await axios.post(`${BACKEND_URL}/plan_trip`, { message: payload });
                                 const mapMatch = res.data.response.match(/\((http.*?maps.*?)\)/);
                                 if (mapMatch) setTripMapLink(mapMatch[1]);
                                 setTripResult(res.data.response);
