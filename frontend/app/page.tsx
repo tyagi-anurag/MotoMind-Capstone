@@ -5,10 +5,19 @@ import { Mic, Camera, Send, Activity, X, MapPin, Wrench, Map, AlertTriangle, Use
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
 
+// Define Message Type to handle Attachments
+type Message = {
+    role: string;
+    content: string;
+    attachmentUrl?: string;
+    attachmentType?: "audio" | "vision";
+};
+
 export default function MotoMindUI() {
   // --- STATE ---
   const [activeTab, setActiveTab] = useState("chat");
-  const [messages, setMessages] = useState<Array<{role: string, content: string}>>([
+  // Updated State type to use our new Message interface
+  const [messages, setMessages] = useState<Message[]>([
     { role: "agent", content: "I am MotoMind. I can see, hear, and plan your ride. \n\n**How can I help?**" }
   ]);
   const [input, setInput] = useState("");
@@ -98,9 +107,18 @@ export default function MotoMindUI() {
   const sendMessage = async () => {
     if (!input && !attachedFile) return;
 
-    const userMsg = input || (attachedFile ? `[Sent ${fileType} file]` : "...");
-    const newMessages = [...messages, { role: "user", content: userMsg }];
-    setMessages(newMessages);
+    // --- RESTORED: Create URL for preview ---
+    const attachmentUrl = attachedFile ? URL.createObjectURL(attachedFile) : undefined;
+    const attachmentType = fileType || undefined;
+
+    const userMsg: Message = { 
+        role: "user", 
+        content: input || (attachedFile ? `[Uploaded ${fileType}]` : "..."),
+        attachmentUrl, // Pass the URL to the message
+        attachmentType
+    };
+
+    setMessages(prev => [...prev, userMsg]);
     setLoading(true);
 
     const currentInput = input;
@@ -252,15 +270,7 @@ export default function MotoMindUI() {
         <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-cyan-900/20 rounded-full blur-[120px]" />
       </div>
 
-      {/* --- MOBILE OVERLAY --- */}
-      {isSidebarOpen && (
-        <div 
-            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
-            onClick={() => setIsSidebarOpen(false)}
-        />
-      )}
-
-      {/* --- SIDEBAR --- */}
+      {/* --- SIDEBAR (Responsive) --- */}
       <aside className={`
         fixed md:relative inset-y-0 left-0 z-40 w-80 bg-[#0a0a0a] md:bg-black/40 backdrop-blur-xl border-r border-white/10 p-6 flex flex-col gap-6 transition-transform duration-300 ease-in-out
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
@@ -318,19 +328,14 @@ export default function MotoMindUI() {
             </div>
           </div>
         </div>
+
         
-        <div className="mt-auto pt-6 border-t border-white/10">
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <Activity size={12} className="text-green-500" />
-            <span>Systems Operational</span>
-          </div>
-        </div>
       </aside>
 
       {/* --- MAIN CONTENT --- */}
       <div className="flex-1 flex flex-col relative z-10 h-screen w-full">
         
-        {/* TOP TABS */}
+        {/* TOP TABS (Scrollable) */}
         <header className="px-4 md:px-6 py-4 border-b border-white/5 flex items-center gap-4 md:gap-6 bg-black/20 backdrop-blur-sm overflow-x-auto scrollbar-hide">
           <button onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 text-gray-400 hover:text-white transition-colors">
             <Menu size={24} />
@@ -376,6 +381,14 @@ export default function MotoMindUI() {
                         ? "bg-cyan-900/30 border-cyan-500/30 rounded-tr-sm text-cyan-50" 
                         : "bg-white/5 border-white/10 rounded-tl-sm text-gray-200"
                     }`}>
+                      {/* --- RESTORED: DISPLAY ATTACHMENTS IN CHAT --- */}
+                      {msg.attachmentUrl && msg.attachmentType === 'vision' && (
+                        <img src={msg.attachmentUrl} alt="Upload" className="rounded-lg max-h-64 mb-3 border border-white/10" />
+                      )}
+                      {msg.attachmentUrl && msg.attachmentType === 'audio' && (
+                        <audio controls src={msg.attachmentUrl} className="w-full mb-3" />
+                      )}
+
                       <div className="prose prose-invert prose-sm max-w-none">
                         <ReactMarkdown components={{a: ({node, ...props}) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline"/>}}>{msg.content}</ReactMarkdown>
                       </div>
@@ -545,7 +558,6 @@ export default function MotoMindUI() {
               </div>
             </div>
           )}
-
         </div>
       </div>
     </main>
