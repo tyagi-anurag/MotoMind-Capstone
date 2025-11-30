@@ -6,3 +6,4 @@ google-adk
 python-dotenv
 requests
 duckduckgo-search
+Pillow
