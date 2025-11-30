@@ -19,21 +19,26 @@ runner = None
 
 # --- GLOBAL INITIALIZATION ---
 try:
+    # CRITICAL CHECK: Ensure keys are present before initialization
+    if os.getenv("GOOGLE_API_KEY") is None:
+        # This will print to Render logs if the key is missing
+        raise ValueError("CRITICAL ERROR: GOOGLE_API_KEY is not set in environment variables.")
+
     print("🔄 System Startup...")
     motomind = MotoMindAgent()
     
-    # Initialize Runner
-    # We rely on the runner to handle session creation on the first call.
+    # Initialize Runner: We rely on this object for all agent logic
     runner = InMemoryRunner(agent=motomind.agent, app_name="agents")
     
     print("✅ MotoMind Brain Loaded Successfully.")
 
 except Exception as e:
-    print("\n\n🔥 FATAL STARTUP ERROR: The AI Agent failed to load.")
-    print(f"ERROR: {e}")
+    print("\n\n🔥 FATAL STARTUP CRASH! The AI Agent failed to load.")
+    print(f"Error Details: {e}")
     traceback.print_exc()
-    print("--------------------------------------------------\n")
-
+    # Setting runner to None ensures endpoints return a safety message
+    runner = None
+    
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,39 +50,54 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
 
-async def run_agent_safe(prompt_text: str):
-    # CRITICAL: Check if the runner failed to load on startup
-    if runner is None:
-        return "⚠️ SYSTEM ERROR: AI Brain failed to initialize. Check Render Environment Variables (API Key)."
-
+async def execute_agent_turn(prompt_text: str):
+    """Helper that runs the agent loop."""
     response_text = ""
+    user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
+    
+    async for event in runner.run_async(
+        user_id="web_user", 
+        session_id="live_session", 
+        new_message=user_msg
+    ):
+        if event.content and event.content.parts:
+            for part in event.content.parts:
+                if hasattr(part, 'text') and part.text:
+                    response_text = part.text
+    return response_text
+
+async def run_agent_safe(prompt_text: str):
+    """
+    Self-Healing Runner: Ensures session exists before running the agent.
+    """
+    if runner is None:
+        return "⚠️ SYSTEM ERROR: AI Brain failed to start. Check Render Environment Variables (API Key)."
+
     SESSION_ID = "live_session" 
+    APP_NAME = "agents"
+    USER_ID = "web_user"
     
     try:
-        # RUN THE AGENT. The runner is designed to handle session creation automatically
-        # if the session_id is new or lost. This bypasses the fragile explicit call.
-        user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
-        
-        async for event in runner.run_async(
-            user_id="web_user", 
-            session_id=SESSION_ID, 
-            new_message=user_msg
-        ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if hasattr(part, 'text') and part.text:
-                        response_text = part.text
-                        
-        return response_text
-
+        # 1. Check if session exists, if not, create it.
+        # This handles server restarts gracefully.
+        await runner.session_service.get_session(APP_NAME, USER_ID, SESSION_ID)
+    except Exception:
+        # Session not found? Create it immediately.
+        await runner.session_service.create_session(APP_NAME, USER_ID, SESSION_ID)
+    
+    # 2. Execute the agent
+    try:
+        return await execute_agent_turn(prompt_text)
     except Exception as e:
-        # Generic Catch for Runtime Errors (e.g., model disconnect)
+        # Catch any subsequent runtime errors
         print(f"❌ RUNTIME ERROR: {e}")
         traceback.print_exc()
-        return "I'm rebooting my brain. Please try asking again."
+        return "I'm having trouble thinking right now. Please check the server logs."
 
 @app.get("/")
 def health_check():
+    if runner is None:
+        return {"status": "CRITICAL - Runner Failed to Load"}
     return {"status": "MotoMind Brain is Active"}
 
 @app.post("/chat")
