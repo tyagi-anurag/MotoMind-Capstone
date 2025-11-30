@@ -1,4 +1,3 @@
-# agent.py
 from google.adk.agents import LlmAgent
 from google.adk.models.google_llm import Gemini
 from google.adk.tools import FunctionTool
@@ -8,38 +7,51 @@ import os
 # Import ALL tools
 from tools.maps_tool import MapsTool
 from tools.vision_tool import VisionTool
-from tools.audio_tool import AudioTool    # <--- NEW IMPORT
+from tools.audio_tool import AudioTool
+from tools.travel_tool import TravelTool # <--- NEW
+from tools.search_tool import SearchTool
 
 class MotoMindAgent:
     def __init__(self, model_name="gemini-2.5-flash-lite"):
-        self.persona = (
-            "You are MotoMind, an expert Indian motorcycle mechanic. "
-            "You are bilingual (English/Hindi). "
-            "Your goal is to help users diagnose bike problems. "
-            "1. If the user sends an image, use 'scan_bike'. "
-            "2. If the user sends an audio recording, use 'diagnose_sound'. "
-            "3. If the user needs a mechanic, use 'find_nearby_mechanic'. "
-        )
+        self.persona = """
+        You are MotoMind, the ultimate riding companion and mechanic.
         
-        # 1. Initialize Tools
+        CORE CAPABILITIES:
+        1. **TRIP PLANNER:** If user wants to travel (e.g. "Plan a trip to Ladakh"), use `plan_trip`.
+           - ALWAYS provide the Google Maps link at the end.
+           
+        2. **DIAGNOSE:** Use 'scan_bike' (Vision) or 'diagnose_sound' (Audio) for problems.
+        3. **VISUALS:** Use 'search_part_image' if they ask to see a part.
+        4. **LOCATE:** Use 'find_nearby_mechanic' for immediate help.
+        
+        Speak like a pro rider. Be encouraging but safety-first.
+        """
+        
+        # Initialize Tools
         maps = MapsTool()
         vision = VisionTool()
-        audio = AudioTool()  # <--- NEW
+        audio = AudioTool()
+        travel = TravelTool() # <--- NEW
+        search = SearchTool()
         
-        # 2. Wrap as ADK Tools
-        find_mechanic_tool = FunctionTool(func=maps.find_nearby_mechanic)
-        scan_bike_tool = FunctionTool(func=vision.scan_bike)
-        diagnose_sound_tool = FunctionTool(func=audio.diagnose_sound) # <--- NEW
+        # Wrap as ADK Tools
+        self.tools_list = [
+            FunctionTool(func=maps.find_nearby_mechanic),
+            FunctionTool(func=vision.scan_bike),
+            FunctionTool(func=audio.diagnose_sound),
+            FunctionTool(func=travel.plan_trip),      # <--- NEW
+            FunctionTool(func=travel.get_map_link),   # <--- NEW
+            FunctionTool(func=search.search_part_image)
+        ]
         
-        # 3. Create Agent with ALL 3 tools
+        # Create Agent
         self.agent = LlmAgent(
             model=Gemini(model=model_name),
             name="MotoMind",
             instruction=self.persona,
-            tools=[find_mechanic_tool, scan_bike_tool, diagnose_sound_tool]
+            tools=self.tools_list
         )
-        print("✅ MotoMind Agent Initialized (Maps + Vision + Audio).")
+        print(f"✅ MotoMind Agent Initialized with {len(self.tools_list)} tools.")
 
 if __name__ == "__main__":
     bot = MotoMindAgent()
-    print(f"Agent ready with {len(bot.agent.tools)} tools.")
