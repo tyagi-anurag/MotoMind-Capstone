@@ -66,7 +66,6 @@ Tech Stack
 
 
 📂 Project Structure
-Plaintext
 MotoMind-Capstone/
 ├── agents/                 # Agent definitions and instructions
 ├── data/                   # Static data (Audio samples for testing)
