@@ -7,7 +7,6 @@ from tools.vision_tool import VisionTool
 from tools.maps_tool import MapsTool
 from tools.travel_tool import TravelTool
 from google.adk.runners import InMemoryRunner
-from google.adk.sessions import Session  # <--- IMPORT ADDED
 from google.genai import types
 import shutil
 import os
@@ -15,6 +14,9 @@ import traceback
 
 app = FastAPI()
 runner = None
+# GLOBAL VARIABLE TO HOLD THE ACTIVE SESSION
+# We let the system generate this, so we never guess wrong.
+ACTIVE_SESSION_ID = None 
 
 # --- GLOBAL INITIALIZATION ---
 try:
@@ -24,7 +26,7 @@ try:
     print("🔄 System Startup...")
     motomind = MotoMindAgent()
     runner = InMemoryRunner(agent=motomind.agent, app_name="agents")
-    print("✅ MotoMind Brain Loaded Successfully.")
+    print("✅ MotoMind Brain Loaded.")
 
 except Exception as e:
     print(f"🔥 FATAL STARTUP ERROR: {e}")
@@ -42,56 +44,78 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
 
-async def execute_agent_turn(prompt_text: str):
-    response_text = ""
-    user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
+async def get_or_create_session():
+    """
+    Smart Session Handler:
+    1. Checks if we already have a session.
+    2. If not, asks the runner to create one (using whatever method it prefers).
+    3. Saves the ID for next time.
+    """
+    global ACTIVE_SESSION_ID
     
-    async for event in runner.run_async(
-        user_id="web_user", 
-        session_id="live_session", 
-        new_message=user_msg
-    ):
-        if event.content and event.content.parts:
-            for part in event.content.parts:
-                if hasattr(part, 'text') and part.text:
-                    response_text = part.text
-    return response_text
+    # Identifiers for the user
+    APP_NAME = "agents"
+    USER_ID = "web_user"
+
+    # 1. If we already have a session ID, try to verify it exists
+    if ACTIVE_SESSION_ID:
+        try:
+            await runner.session_service.get_session(APP_NAME, USER_ID, ACTIVE_SESSION_ID)
+            return ACTIVE_SESSION_ID
+        except Exception:
+            print("⚠️ Active session lost. Creating new one...")
+            ACTIVE_SESSION_ID = None # Reset
+
+    # 2. Create a new session using the "No Arguments" method (Fixes the TypeError)
+    try:
+        print("ℹ️ Creating new session (Method A: Empty)...")
+        # This fixes the "takes 1 argument but 2 given" error
+        session = await runner.session_service.create_session()
+        ACTIVE_SESSION_ID = session.id
+        print(f"✅ Created Session: {ACTIVE_SESSION_ID}")
+        return ACTIVE_SESSION_ID
+    except Exception as e:
+        print(f"⚠️ Method A failed ({e}). Trying Method B (Explicit)...")
+        
+    # 3. Fallback: Create using explicit arguments (For different ADK versions)
+    try:
+        new_id = "live_session_backup"
+        await runner.session_service.create_session(APP_NAME, USER_ID, new_id)
+        ACTIVE_SESSION_ID = new_id
+        return ACTIVE_SESSION_ID
+    except Exception as e:
+        raise RuntimeError(f"Could not create session. All methods failed. Error: {e}")
 
 async def run_agent_safe(prompt_text: str):
     if runner is None:
-        return "⚠️ SYSTEM ERROR: AI Brain failed to start. Check API Keys."
-
-    # --- SESSION FIX START ---
-    # The library on the cloud requires a Session OBJECT, not just strings.
-    # We check if the session exists. If not, we create it using the Object.
-    SESSION_ID = "live_session"
-    USER_ID = "web_user"
-    APP_NAME = "agents"
+        return "⚠️ System Error: Agent not running. Check logs."
 
     try:
-        # Try to get existing session
-        await runner.session_service.get_session(APP_NAME, USER_ID, SESSION_ID)
-    except Exception:
-        print(f"ℹ️ Session missing. Creating new Session Object...")
-        try:
-            # NEW METHOD: Create Object first
-            new_session = Session(id=SESSION_ID, user_id=USER_ID, app_name=APP_NAME)
-            await runner.session_service.create_session(new_session)
-        except Exception as e:
-            print(f"❌ Session Creation Failed: {e}")
-            # Fallback: If object creation fails, try legacy method
-            try:
-                await runner.session_service.create_session(APP_NAME, USER_ID, SESSION_ID)
-            except:
-                pass # If both fail, we let the runner try to handle it or fail noisily
-    # --- SESSION FIX END ---
+        # Step 1: Get a valid Session ID
+        session_id = await get_or_create_session()
+        
+        # Step 2: Run the Agent
+        response_text = ""
+        user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
+        
+        async for event in runner.run_async(
+            user_id="web_user", 
+            session_id=session_id, 
+            new_message=user_msg
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        response_text = part.text
+        return response_text
 
-    try:
-        return await execute_agent_turn(prompt_text)
     except Exception as e:
         print(f"❌ RUNTIME ERROR: {e}")
         traceback.print_exc()
-        return "I'm rebooting my brain. Please try asking again."
+        # Reset session on crash to force a clean slate next time
+        global ACTIVE_SESSION_ID
+        ACTIVE_SESSION_ID = None 
+        return "I encountered a glitch. Please ask me that again."
 
 @app.get("/")
 def health_check():
