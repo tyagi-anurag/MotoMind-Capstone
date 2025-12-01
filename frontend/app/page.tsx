@@ -5,10 +5,6 @@ import { Mic, Camera, Send, Activity, X, MapPin, Wrench, Map, AlertTriangle, Use
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
 
-// 🔧 CONFIGURATION: Change this to your live backend URL
-// Example: "https://motomind-backend.onrender.com"
-const BACKEND_URL = "https://motomind-backend.onrender.com"; 
-
 // Define Message Type to handle Attachments
 type Message = {
     role: string;
@@ -18,6 +14,12 @@ type Message = {
 };
 
 export default function MotoMindUI() {
+  // ---------------------------------------------------------
+  // 🔧 CONFIGURATION: PASTE YOUR DEPLOYED BACKEND URL HERE
+  // ---------------------------------------------------------
+  const BACKEND_URL = "https://motomind-backend.onrender.com"; //  <--- set to your render URL
+  // ---------------------------------------------------------
+
   // --- STATE ---
   const [activeTab, setActiveTab] = useState("chat");
   const [messages, setMessages] = useState<Message[]>([
@@ -64,7 +66,7 @@ export default function MotoMindUI() {
         try {
             const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
             const geoData = await geoRes.json();
-            const locationName = geoData.address.city || geoData.address.town || geoData.address.village || `${latitude}, ${longitude}`;
+            const locationName = geoData.address?.city || geoData.address?.town || geoData.address?.village || `${latitude}, ${longitude}`;
             setUserLocation(locationName);
         } catch (e) {
             setUserLocation(`${latitude}, ${longitude}`);
@@ -87,7 +89,7 @@ export default function MotoMindUI() {
     setMessages([
         { 
             role: "agent", 
-            content: `Welcome **${userName}**! Ready to ride with your **${bikeModel}** in \`${userLocation}\`. \n\n**How can I help you today?**` 
+            content: `Welcome **${userName || "Rider"}**! Ready to ride with your **${bikeModel}** in \`${userLocation}\`. \n\n**How can I help you today?**` 
         }
     ]);
   };
@@ -110,19 +112,16 @@ export default function MotoMindUI() {
   const sendMessage = async () => {
     if (!input && !attachedFile) return;
 
-    // 1. Create a local URL to display the image/audio immediately
     const attachmentUrl = attachedFile ? URL.createObjectURL(attachedFile) : undefined;
     const attachmentType = fileType || undefined;
 
-    // 2. Create the message object
     const userMsg: Message = { 
         role: "user", 
         content: input || (attachedFile ? `[Uploaded ${fileType}]` : "..."),
-        attachmentUrl,
+        attachmentUrl, 
         attachmentType
     };
 
-    // 3. Add to chat immediately
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
 
@@ -130,30 +129,42 @@ export default function MotoMindUI() {
     const currentFile = attachedFile;
     const currentType = fileType;
 
-    // 4. Clear inputs
     setInput("");
     clearAttachment();
 
     try {
       let responseText = "";
+      let responseImages: string[] = [];
 
       if (currentFile && currentType) {
         const formData = new FormData();
         formData.append("file", currentFile);
-        formData.append("message", currentInput || `Analyze this for a ${bikeModel}.`);
-        const endpoint = currentType === "audio" ? "diagnose/audio" : "diagnose/vision";
+        const contextPrompt = currentInput 
+            ? `Context: User has a ${bikeModel}. Question: ${currentInput}` 
+            : `Analyze this for a ${bikeModel}.`;
+        formData.append("message", contextPrompt);
         
-        // Send to Backend
-        const res = await axios.post(`${BACKEND_URL}/${endpoint}`, formData);
+        const endpoint = currentType === "audio" ? "diagnose/audio" : "diagnose/vision";
+        const res = await axios.post(`${BACKEND_URL}/${endpoint}`, formData, {
+          headers: { "Content-Type": "multipart/form-data" }
+        });
+
         responseText = res.data.response;
+        responseImages = res.data.images || [];
       } else {
         const contextPrompt = `[Context: User: ${userName} | Location: ${userLocation} | Bike: ${bikeModel}] ${currentInput}`;
         const res = await axios.post(`${BACKEND_URL}/chat`, { message: contextPrompt });
         responseText = res.data.response;
+        responseImages = res.data.images || [];
       }
 
-      setMessages(prev => [...prev, { role: "agent", content: responseText }]);
-      
+      // If backend included at least one image URL, add it as an agent attachment so the UI shows the image
+      if (responseImages && responseImages.length > 0) {
+        setMessages(prev => [...prev, { role: "agent", content: responseText || "Here is what I found.", attachmentUrl: responseImages[0], attachmentType: "vision" }]);
+      } else {
+        // standard text reply
+        setMessages(prev => [...prev, { role: "agent", content: responseText }]);
+      }
     } catch (error) {
       console.error(error);
       setMessages(prev => [...prev, { role: "agent", content: "⚠️ System Error: Could not reach MotoMind Brain." }]);
@@ -254,7 +265,7 @@ export default function MotoMindUI() {
                 <button 
                   onClick={finishOnboarding}
                   disabled={!bikeModel || !userLocation}
-                  className={`w-full py-4 mt-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${
+                  className={`w-full py-4 mt-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all $ {
                     (!bikeModel || !userLocation) 
                     ? "bg-white/5 text-gray-600 cursor-not-allowed"
                     : "bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-900/50"
@@ -340,7 +351,7 @@ export default function MotoMindUI() {
             </div>
           </div>
         </div>
-        
+
         <div className="mt-auto pt-6 border-t border-white/10">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <Activity size={12} className="text-green-500" />
@@ -499,7 +510,7 @@ export default function MotoMindUI() {
                             try {
                                 const payload = `${s}|${d}|${b}|${days}|${p}`;
                                 const res = await axios.post(`${BACKEND_URL}/plan_trip`, { message: payload });
-                                const mapMatch = res.data.response.match(/\((http.*?maps.*?)\)/);
+                                const mapMatch = res.data.response.match(/(http.*?maps.*?)/);
                                 if (mapMatch) setTripMapLink(mapMatch[1]);
                                 setTripResult(res.data.response);
                             } catch(e) { alert("Trip planning failed."); }
