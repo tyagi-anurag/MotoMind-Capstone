@@ -14,7 +14,7 @@
   
 ### 🎥 [Watch the Demo Video](https://youtu.be/SysBdsB8qjA?si=n7rZo_iJ2xxwQBN6) &nbsp;&nbsp;|&nbsp;&nbsp; 🚀 [Try the Live App](https://moto-mind-capstone.vercel.app)
 
-<img src="assets/setup.png" width="100%" style="border-radius: 10px; border: 1px solid #333; box-shadow: 0px 0px 20px rgba(0,255,255,0.1);" />
+<img src="assets/setup_demo.png" width="100%" style="border-radius: 10px; border: 1px solid #333; box-shadow: 0px 0px 20px rgba(0,255,255,0.1);" />
 
 </div>
 
@@ -46,36 +46,31 @@ Powered by **Gemini 2.0 Flash**, it uses multimodal perception to understand you
 
 # 🏗️ System Architecture
 
-<img src="assets/architecture.png" alt="System Architecture" width="100%">
+<img src="assets/architecture.png" width="100%" />
 
 ```mermaid
 graph TD
     User((User)) -->|Voice/Image/Text| UI[Next.js Glass UI]
     UI -->|REST API| API[FastAPI Backend]
-    
-    subgraph "MotoMind Brain (Google ADK)"
+
+    subgraph MotoMind_Brain [MotoMind Brain (Google ADK)]
         API --> Runner[InMemory Runner]
-        Runner --> Agent[🤖 MotoMind Supervisor]
-        
-        Agent -->|Hears| Tool1[👂 Audio Tool]
-        Agent -->|Sees| Tool2[👁️ Vision Tool]
-        Agent -->|Plans| Tool3[🛣️ Travel Tool]
-        Agent -->|Locates| Tool4[🗺️ Maps Tool]
-        Agent -->|Searches| Tool5[🔎 Search Tool]
+        Runner --> Agent[MotoMind Supervisor]
+
+        Agent -->|Hears| AudioTool[Audio Tool]
+        Agent -->|Sees| VisionTool[Vision Tool]
+        Agent -->|Plans| TravelTool[Travel Tool]
+        Agent -->|Locates| MapsTool[Maps Tool]
+        Agent -->|Searches| SearchTool[Search Tool]
     end
-    
-    Tool1 --> Gemini[✨ Gemini 2.0 Flash]
-    Tool2 --> Gemini
-    Tool3 --> Reasoning[Chain-of-Thought]
-    Tool4 --> GMap[Google Maps API]
-    Tool5 --> Google[Google Search]
-    
-    style Agent fill:#f9f,stroke:#333,stroke-width:2px
-    style Gemini fill:#bbf,stroke:#333,stroke-width:2px
 
+    AudioTool --> Gemini[Gemini 2.0 Flash]
+    VisionTool --> Gemini
+    TravelTool --> Reasoning[Chain-of-Thought]
+    MapsTool --> GMaps[Google Maps API]
+    SearchTool --> Google[Google Search]
 
-
-🔧 Tech Stack
+Tech Stack
    | Layer           | Technology                                       |
 | --------------- | ------------------------------------------------ |
 | Agent Framework | Google ADK                                       |
