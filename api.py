@@ -1,7 +1,15 @@
 # api.py
+import os
+import shutil
+import traceback
+import inspect
+from typing import Optional, List
+
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# Your agent + tools imports (same as before)
 from agent import MotoMindAgent
 from tools.audio_tool import AudioTool
 from tools.vision_tool import VisionTool
@@ -9,18 +17,20 @@ from tools.maps_tool import MapsTool
 from tools.travel_tool import TravelTool
 from google.adk.runners import InMemoryRunner
 from google.genai import types
-import shutil
-import os
-import traceback
-import inspect
-import asyncio
 
 app = FastAPI()
-runner = None
-# GLOBAL VARIABLE TO HOLD THE ACTIVE SESSION
-ACTIVE_SESSION_ID = None
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # change to specific origins in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# --- GLOBAL INITIALIZATION ---
+runner = None
+ACTIVE_SESSION_ID: Optional[str] = None
+
+# --- Initialization: create your agent + runner ---
 try:
     if os.getenv("GOOGLE_API_KEY") is None:
         raise ValueError("CRITICAL ERROR: GOOGLE_API_KEY is not set.")
@@ -29,115 +39,88 @@ try:
     motomind = MotoMindAgent()
     runner = InMemoryRunner(agent=motomind.agent, app_name="agents")
     print("✅ MotoMind Brain Loaded.")
-
 except Exception as e:
     print(f"🔥 FATAL STARTUP ERROR: {e}")
     traceback.print_exc()
     runner = None
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 class ChatRequest(BaseModel):
     message: str
 
 
-async def _maybe_await(callable_or_result, *args, **kwargs):
-    """
-    Accepts either:
-      - a callable to be executed (sync or async)
-      - OR a value (already the result)
-    If callable_or_result is callable, call it with args/kwargs.
-    If the returned value is awaitable, await it.
-    Returns the final result.
-    """
+async def _maybe_await(fn_or_val, *args, **kwargs):
+    """Call fn_or_val if callable (supports sync/async functions). Otherwise return value."""
     try:
-        if callable(callable_or_result):
-            res = callable_or_result(*args, **kwargs)
+        if callable(fn_or_val):
+            res = fn_or_val(*args, **kwargs)
         else:
-            res = callable_or_result
+            res = fn_or_val
+        # if it's awaitable / coroutine, await it
         if inspect.isawaitable(res):
             return await res
         return res
     except Exception:
-        # Re-raise to be handled by caller
         raise
 
 
 async def get_or_create_session():
     """
-    Smart Session Handler:
-    1. Checks if we already have a session.
-    2. If not, asks the runner to create one (using whatever method it prefers).
-    3. Saves the ID for next time.
-
-    This implementation is defensive:
-      - uses keyword args for ADK versions that expect them
-      - tries no-arg create_session()
-      - tries explicit keyword create_session(...)
-      - supports sync or async session_service methods
+    Defensive session creation that supports multiple ADK versions:
+      - try no-arg create_session()
+      - then keyword args create_session(app_name=..., user_id=..., session_id=...)
+      - fallback positional call (last resort)
+    Always returns a string session id.
     """
     global ACTIVE_SESSION_ID
-
     if runner is None:
-        raise RuntimeError("Runner is not initialized.")
+        raise RuntimeError("Runner not initialized")
 
-    # Identifiers for the user
     APP_NAME = "agents"
     USER_ID = "web_user"
-
-    # 1. If we already have a session ID, try to verify it exists
-    if ACTIVE_SESSION_ID:
-        try:
-            svc = runner.session_service
-            # attempt to call get_session using keyword args; support sync/async
-            await _maybe_await(svc.get_session, app_name=APP_NAME, user_id=USER_ID, session_id=ACTIVE_SESSION_ID)
-            return ACTIVE_SESSION_ID
-        except Exception:
-            print("⚠️ Active session lost or verification failed. Creating new one...")
-            ACTIVE_SESSION_ID = None  # Reset
-
     svc = runner.session_service
 
-    # Debug: print signature and type to logs so we can see what implementation we have
+    # 1) Verify existing session
+    if ACTIVE_SESSION_ID:
+        try:
+            await _maybe_await(
+                svc.get_session,
+                app_name=APP_NAME,
+                user_id=USER_ID,
+                session_id=ACTIVE_SESSION_ID
+            )
+            return ACTIVE_SESSION_ID
+        except Exception:
+            print("⚠️ Active session missing or verification failed. Creating new one...")
+            ACTIVE_SESSION_ID = None
+
+    # Debuggable info (optional)
     try:
         print("session_service type:", type(svc))
         if hasattr(svc, "create_session"):
             print("create_session signature:", inspect.signature(svc.create_session))
-        if hasattr(svc, "get_session"):
-            print("get_session signature:", inspect.signature(svc.get_session))
     except Exception:
-        # don't fail if introspection fails
         pass
 
-    # 2. Try create_session() with no args (some ADK examples use this)
+    # 2) Method A: no-arg create_session()
     try:
-        print("ℹ️ Creating new session (Method A: Empty args)...")
+        print("ℹ️ Creating new session (Method A: no args)...")
         session = await _maybe_await(svc.create_session)
         if session is not None and hasattr(session, "id"):
             ACTIVE_SESSION_ID = session.id
         elif isinstance(session, str) and session:
             ACTIVE_SESSION_ID = session
         else:
-            # session may be None but creation succeeded; create a fallback id and try to register it
-            print("ℹ️ Method A returned no session object; using fallback id.")
             ACTIVE_SESSION_ID = "live_session_fallback_a"
-        print(f"✅ Created Session (Method A): {ACTIVE_SESSION_ID}")
+        print("✅ Created session (A):", ACTIVE_SESSION_ID)
         return ACTIVE_SESSION_ID
     except Exception as e:
-        print(f"⚠️ Method A failed ({e}). Trying Method B (Explicit keyword args)...")
-        # fall-through to Method B
+        print("⚠️ Method A failed:", e)
 
-    # 3. Try create_session with explicit keyword args (works with keyword-only implementations)
+    # 3) Method B: keyword args
     try:
+        print("ℹ️ Creating new session (Method B: keywords)...")
         new_id = "live_session_backup"
-        print("ℹ️ Creating new session (Method B: explicit keywords)...")
         session = await _maybe_await(
             svc.create_session,
             app_name=APP_NAME,
@@ -147,60 +130,61 @@ async def get_or_create_session():
         if session is not None and hasattr(session, "id"):
             ACTIVE_SESSION_ID = session.id
         else:
-            # If the implementation doesn't return a session object, assume creation succeeded and use new_id
             ACTIVE_SESSION_ID = new_id
-        print(f"✅ Created Session (Method B): {ACTIVE_SESSION_ID}")
+        print("✅ Created session (B):", ACTIVE_SESSION_ID)
         return ACTIVE_SESSION_ID
     except Exception as e:
-        # 4. Last ditch: try positional (some VERY old/strange implementations might accept it)
-        try:
-            print("ℹ️ Trying Method C: positional fallback (last resort)...")
-            session = await _maybe_await(svc.create_session, APP_NAME, USER_ID, "live_session_positional")
-            if session is not None and hasattr(session, "id"):
-                ACTIVE_SESSION_ID = session.id
-            else:
-                ACTIVE_SESSION_ID = "live_session_positional"
-            print(f"✅ Created Session (Method C): {ACTIVE_SESSION_ID}")
-            return ACTIVE_SESSION_ID
-        except Exception as e2:
-            raise RuntimeError(f"Could not create session. All methods failed. Errors: MethodB: {e}; MethodC: {e2}")
+        print("⚠️ Method B failed:", e)
+
+    # 4) Method C: positional (last resort)
+    try:
+        print("ℹ️ Creating new session (Method C: positional fallback)...")
+        session = await _maybe_await(svc.create_session, APP_NAME, USER_ID, "live_session_positional")
+        if session is not None and hasattr(session, "id"):
+            ACTIVE_SESSION_ID = session.id
+        else:
+            ACTIVE_SESSION_ID = "live_session_positional"
+        print("✅ Created session (C):", ACTIVE_SESSION_ID)
+        return ACTIVE_SESSION_ID
+    except Exception as e:
+        print("⛔ All session creation methods failed.")
+        raise RuntimeError(f"Could not create session. Errors: {e}")
 
 
 async def run_agent_safe(prompt_text: str):
     """
-    Runs the agent using the runner while ensuring we have a valid session.
-    Resets the ACTIVE_SESSION_ID on error so next call attempts a fresh session creation.
+    Run the agent with a valid session. Returns the plain text response.
+    On error: reset ACTIVE_SESSION_ID and return user-friendly message (no crashes).
     """
     if runner is None:
         return "⚠️ System Error: Agent not running. Check logs."
 
     try:
-        # Step 1: Get a valid Session ID
         session_id = await get_or_create_session()
-
-        # Step 2: Run the Agent
         response_text = ""
         user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
 
-        # runner.run_async is expected to be async-iterable. Support both async-iterable and sync iterable.
         async for event in runner.run_async(
             user_id="web_user",
             session_id=session_id,
             new_message=user_msg
         ):
-            if event and getattr(event, "content", None) and event.content.parts:
+            # event.content.parts is expected; gather the latest non-empty .text
+            if event and getattr(event, "content", None) and getattr(event.content, "parts", None):
                 for part in event.content.parts:
                     if hasattr(part, "text") and part.text:
-                        response_text = part.text
+                        response_text += part.text if not response_text else ("\n" + part.text)
+        # Ensure at least something meaningful is returned
+        if not response_text:
+            return "I processed your request but didn't generate a detailed answer. Try rephrasing or ask again."
         return response_text
-
     except Exception as e:
-        print(f"❌ RUNTIME ERROR in run_agent_safe: {e}")
+        print("❌ RUNTIME ERROR in run_agent_safe:", e)
         traceback.print_exc()
-        # Reset session on crash to force a clean slate next time
+        # Reset session on crash to force clean start next time
         global ACTIVE_SESSION_ID
         ACTIVE_SESSION_ID = None
-        return "I encountered a glitch. Please ask me that again."
+        return "I encountered a glitch. Please try again."
 
 
 @app.get("/")
@@ -210,7 +194,19 @@ def health_check():
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    return {"response": await run_agent_safe(request.message)}
+    """
+    Expects JSON: { "message": "..." }
+    Returns: { "response": "plain text string", "images": [optional urls] }
+    """
+    try:
+        prompt = request.message
+        result = await run_agent_safe(prompt)
+        # Always return plain text in "response"
+        return {"response": result, "images": []}
+    except Exception as e:
+        print("ERROR /chat:", e)
+        traceback.print_exc()
+        return {"response": "⚠️ System Error: Could not process chat request.", "images": []}
 
 
 @app.post("/find_mechanics")
@@ -225,35 +221,60 @@ async def find_mechanics(request: ChatRequest):
             bike = parts[1].replace("Bike:", "").strip()
         tool = MapsTool()
         result = tool.find_nearby_mechanic(location, bike)
-        return {"response": result}
+        # tool returns string; keep it plain
+        return {"response": str(result), "images": []}
     except Exception as e:
-        return {"response": f"Error: {str(e)}"}
+        print("ERROR /find_mechanics:", e)
+        return {"response": f"Error: {str(e)}", "images": []}
 
 
 @app.post("/plan_trip")
 async def plan_trip(request: ChatRequest):
     try:
         data = request.message.split("|")
+        if len(data) < 5:
+            return {"response": "Invalid trip payload. Expected format: from|to|bike|days|riders", "images": []}
         tool = TravelTool()
         plan = tool.plan_trip(data[0], data[1], data[2], int(data[3]), int(data[4]))
         map_link = tool.get_map_link(data[0], data[1])
-        return {"response": f"{plan}\n\n### 🗺️ Navigation\n👉 **[Click to Open Route in Google Maps]({map_link})**"}
+        combined = f"{plan}\n\n### 🗺️ Navigation\n👉 **Open route:** {map_link}"
+        return {"response": combined, "images": []}
     except Exception as e:
-        return {"response": f"Error: {str(e)}"}
+        print("ERROR /plan_trip:", e)
+        traceback.print_exc()
+        return {"response": f"Error: {str(e)}", "images": []}
 
 
 @app.post("/diagnose/audio")
 async def diagnose_audio(file: UploadFile = File(...), message: str = Form(...)):
+    """
+    Expects multipart/form-data with fields:
+      - file: audio file
+      - message: textual context (string)
+    Returns:
+      { "response": "<plain text answer>", "images": [] }
+    """
     if runner is None:
-        return {"response": "System Error: Agent not running."}
+        return {"response": "System Error: Agent not running.", "images": []}
+
     temp_path = f"temp_{file.filename}"
     try:
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+
         tool = AudioTool()
+        # tool.diagnose_sound should return a string summary; convert to string to be safe
         raw = tool.diagnose_sound(temp_path)
+        if not isinstance(raw, str):
+            raw = str(raw)
         final = f"Audio Analysis Result: {raw}\nUser Question: {message}\nExplain this."
-        return {"response": await run_agent_safe(final)}
+        # Ask agent to explain the result (optional)
+        explanation = await run_agent_safe(final)
+        return {"response": explanation, "images": []}
+    except Exception as e:
+        print("ERROR /diagnose/audio:", e)
+        traceback.print_exc()
+        return {"response": f"Error processing audio: {e}", "images": []}
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -261,16 +282,42 @@ async def diagnose_audio(file: UploadFile = File(...), message: str = Form(...))
 
 @app.post("/diagnose/vision")
 async def diagnose_vision(file: UploadFile = File(...), message: str = Form(...)):
+    """
+    Expects multipart/form-data with:
+      - file: image
+      - message: textual context
+    Returns:
+      { "response": "<plain text answer>", "images": [optional urls] }
+    """
     if runner is None:
-        return {"response": "System Error: Agent not running."}
+        return {"response": "System Error: Agent not running.", "images": []}
+
     temp_path = f"temp_{file.filename}"
     try:
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+
         tool = VisionTool()
-        raw = tool.scan_bike(temp_path)
-        final = f"Visual Scan Result: {raw}\nUser Question: {message}\nAnswer the user."
-        return {"response": await run_agent_safe(final)}
+        raw = tool.scan_bike(temp_path)  # may be string or dict
+        # Normalize to string for the main response (to avoid blank bubbles in UI)
+        if isinstance(raw, dict):
+            # try to extract message + image url if present
+            text = raw.get("text") or raw.get("description") or ""
+            images = raw.get("images") or raw.get("image_urls") or []
+            # ensure images is list of strings
+            images = [str(u) for u in images if u]
+            final_text = f"Visual Scan Result: {text}\nUser Question: {message}\nAnswer the user."
+            explanation = await run_agent_safe(final_text)
+            return {"response": explanation, "images": images}
+        else:
+            txt = str(raw)
+            final = f"Visual Scan Result: {txt}\nUser Question: {message}\nAnswer the user."
+            explanation = await run_agent_safe(final)
+            return {"response": explanation, "images": []}
+    except Exception as e:
+        print("ERROR /diagnose/vision:", e)
+        traceback.print_exc()
+        return {"response": f"Error processing image: {e}", "images": []}
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
