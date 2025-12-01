@@ -13,25 +13,29 @@ import os
 import traceback
 
 app = FastAPI()
+
+# Initialize runner globally to handle deployment checks
 runner = None
 
 # --- GLOBAL INITIALIZATION ---
 try:
+    # CRITICAL CHECK: Ensure API key is set before initialization
     if os.getenv("GOOGLE_API_KEY") is None:
         raise ValueError("CRITICAL ERROR: GOOGLE_API_KEY is not set in environment variables.")
 
     print("🔄 System Startup...")
     motomind = MotoMindAgent()
     
-    # Initialize Runner (This is the only line where app_name is used)
+    # Initialize Runner (Relies on this to be successful)
     runner = InMemoryRunner(agent=motomind.agent, app_name="agents")
     
     print("✅ MotoMind Brain Loaded Successfully.")
 
 except Exception as e:
-    print("\n\n🔥 FATAL STARTUP CRASH! Check Logs NOW.")
+    print("\n\n🔥 FATAL STARTUP CRASH! The AI Agent failed to load.")
     print(f"Error Details: {e}")
     traceback.print_exc()
+    # Set runner to None to prevent subsequent crashes on the endpoints
     runner = None
     
 app.add_middleware(
@@ -45,11 +49,12 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
 
-# Helper to run the agent (now simplified)
 async def execute_agent_turn(prompt_text: str):
+    """Helper that runs the agent loop by implicitly relying on the Runner to manage the session."""
     response_text = ""
     user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
     
+    # FIX: Trust runner.run_async to create the session if needed.
     async for event in runner.run_async(
         user_id="web_user", 
         session_id="live_session", 
@@ -65,15 +70,11 @@ async def run_agent_safe(prompt_text: str):
     if runner is None:
         return "⚠️ SYSTEM ERROR: AI Brain failed to start. Check Render Environment Variables (API Key)."
 
-    # FIX: We are removing all explicit session_service calls. 
-    # We rely entirely on runner.run_async to handle session creation implicitly.
-    # The error suggests the local ADK is too old to support the explicit method.
-    
     try:
-        # ATTEMPT 1: Trust runner.run_async to create the session if needed
+        # ATTEMPT 1: Runs the agent. No explicit session calls.
         return await execute_agent_turn(prompt_text)
     except Exception as e:
-        # If it crashes now, the error is an execution error, not a session creation error.
+        # Generic Catch for any runtime crash
         print(f"❌ RUNTIME ERROR: {e}")
         traceback.print_exc()
         return "I'm rebooting my brain. Please try asking again."
@@ -84,7 +85,6 @@ def health_check():
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    # This now runs the simpler run_agent_safe logic
     return {"response": await run_agent_safe(request.message)}
 
 @app.post("/find_mechanics")
