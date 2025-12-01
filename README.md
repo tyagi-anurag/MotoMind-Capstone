@@ -60,9 +60,9 @@ Tech Stack
 
 
 📸 Capabilities Gallery
-<table width="100%"> <tr> <th width="50%">👁️ Visual Diagnostics</th> <th width="50%">👂 Acoustic Analysis</th> </tr> <tr> <td>Identifies bike models, aftermarket mods, and visible damage using Gemini Vision.</td> <td>Analyzes engine waveforms to detect internal faults like <b>Rod Knock</b> or <b>Valve Noise</b>.</td> </tr> <tr> <td><img src="assets/vision.png" width="100%" style="border-radius: 8px;"></td> <td><img src="assets/audio.png" width="100%" style="border-radius: 8px;"></td> </tr> </table>
+<table width="100%"> <tr> <th width="50%">👁️ Visual Diagnostics</th> <th width="50%">👂 Acoustic Analysis</th> </tr> <tr> <td>Identifies bike models, aftermarket mods, and visible damage using Gemini Vision.</td> <td>Analyzes engine waveforms to detect internal faults like <b>Rod Knock</b> or <b>Valve Noise</b>.</td> </tr> <tr> <td><img src="assets/vision_demo.png" width="100%" style="border-radius: 8px;"></td> <td><img src="assets/audio_demo.png" width="100%" style="border-radius: 8px;"></td> </tr> </table>
 
-<table width="100%"> <tr> <th width="50%">🛣️ Ladakh Trip Planner</th> <th width="50%">🆘 Rescue Map</th> </tr> <tr> <td>Generates convoy itineraries, fuel stops, and spare parts lists specific to your bike model.</td> <td>Connects to <b>Google Maps API</b> to find hyper-local roadside mechanics (not just showrooms).</td> </tr> <tr> <td><img src="assets/trip.png" width="100%" style="border-radius: 8px;"></td> <td><img src="assets/rescue.png" width="100%" style="border-radius: 8px;"></td> </tr> </table>
+<table width="100%"> <tr> <th width="50%">🛣️ Ladakh Trip Planner</th> <th width="50%">🆘 Rescue Map</th> </tr> <tr> <td>Generates convoy itineraries, fuel stops, and spare parts lists specific to your bike model.</td> <td>Connects to <b>Google Maps API</b> to find hyper-local roadside mechanics (not just showrooms).</td> </tr> <tr> <td><img src="assets/trip_demo.png" width="100%" style="border-radius: 8px;"></td> <td><img src="assets/map_demo.png" width="100%" style="border-radius: 8px;"></td> </tr> </table>
 
 
 📂 Project Structure
