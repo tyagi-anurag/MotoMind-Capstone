@@ -341,12 +341,7 @@ export default function MotoMindUI() {
           </div>
         </div>
         
-        <div className="mt-auto pt-6 border-t border-white/10">
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <Activity size={12} className="text-green-500" />
-            <span>Systems Operational</span>
-          </div>
-        </div>
+        
       </aside>
 
       {/* --- MAIN CONTENT --- */}
