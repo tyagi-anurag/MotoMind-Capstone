@@ -1,8 +1,8 @@
-# api.py
 import os
 import shutil
 import traceback
 import inspect
+import uuid
 from typing import Optional, List
 
 from fastapi import FastAPI, UploadFile, File, Form
@@ -17,6 +17,8 @@ from tools.maps_tool import MapsTool
 from tools.travel_tool import TravelTool
 from google.adk.runners import InMemoryRunner
 from google.genai import types
+# Import base64 to handle image data
+import base64
 
 app = FastAPI()
 app.add_middleware(
@@ -66,11 +68,7 @@ async def _maybe_await(fn_or_val, *args, **kwargs):
 
 async def get_or_create_session():
     """
-    Defensive session creation that supports multiple ADK versions:
-      - try no-arg create_session()
-      - then keyword args create_session(app_name=..., user_id=..., session_id=...)
-      - fallback positional call (last resort)
-    Always returns a string session id.
+    Defensive session creation that supports multiple ADK versions.
     """
     global ACTIVE_SESSION_ID
     if runner is None:
@@ -94,14 +92,6 @@ async def get_or_create_session():
             print("⚠️ Active session missing or verification failed. Creating new one...")
             ACTIVE_SESSION_ID = None
 
-    # Debuggable info (optional)
-    try:
-        print("session_service type:", type(svc))
-        if hasattr(svc, "create_session"):
-            print("create_session signature:", inspect.signature(svc.create_session))
-    except Exception:
-        pass
-
     # 2) Method A: no-arg create_session()
     try:
         print("ℹ️ Creating new session (Method A: no args)...")
@@ -111,7 +101,7 @@ async def get_or_create_session():
         elif isinstance(session, str) and session:
             ACTIVE_SESSION_ID = session
         else:
-            ACTIVE_SESSION_ID = "live_session_fallback_a"
+            ACTIVE_SESSION_ID = f"session_{uuid.uuid4().hex[:8]}"
         print("✅ Created session (A):", ACTIVE_SESSION_ID)
         return ACTIVE_SESSION_ID
     except Exception as e:
@@ -120,7 +110,7 @@ async def get_or_create_session():
     # 3) Method B: keyword args
     try:
         print("ℹ️ Creating new session (Method B: keywords)...")
-        new_id = "live_session_backup"
+        new_id = f"session_{uuid.uuid4().hex[:8]}"
         session = await _maybe_await(
             svc.create_session,
             app_name=APP_NAME,
@@ -139,11 +129,12 @@ async def get_or_create_session():
     # 4) Method C: positional (last resort)
     try:
         print("ℹ️ Creating new session (Method C: positional fallback)...")
-        session = await _maybe_await(svc.create_session, APP_NAME, USER_ID, "live_session_positional")
+        session = await _maybe_await(svc.create_session, APP_NAME, USER_ID, f"session_{uuid.uuid4().hex[:8]}")
         if session is not None and hasattr(session, "id"):
             ACTIVE_SESSION_ID = session.id
         else:
-            ACTIVE_SESSION_ID = "live_session_positional"
+            # If it fails to return an object but doesn't crash, generate a fallback ID
+            ACTIVE_SESSION_ID = f"session_{uuid.uuid4().hex[:8]}"
         print("✅ Created session (C):", ACTIVE_SESSION_ID)
         return ACTIVE_SESSION_ID
     except Exception as e:
@@ -160,10 +151,12 @@ async def run_agent_safe(prompt_text: str):
         return "⚠️ System Error: Agent not running. Check logs."
 
     try:
+        # Step 1: Get a valid Session ID
         session_id = await get_or_create_session()
         response_text = ""
         user_msg = types.Content(role="user", parts=[types.Part(text=prompt_text)])
 
+        # runner.run_async is expected to be async-iterable. Support both async-iterable and sync iterable.
         async for event in runner.run_async(
             user_id="web_user",
             session_id=session_id,
@@ -294,26 +287,45 @@ async def diagnose_vision(file: UploadFile = File(...), message: str = Form(...)
 
     temp_path = f"temp_{file.filename}"
     try:
+        # 1. Save the file locally temporarily
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
+        # 2. Run Vision Tool
         tool = VisionTool()
         raw = tool.scan_bike(temp_path)  # may be string or dict
-        # Normalize to string for the main response (to avoid blank bubbles in UI)
+        
+        # 3. Process Agent Explanation
+        final_text = ""
+        image_url = None
+
         if isinstance(raw, dict):
             # try to extract message + image url if present
-            text = raw.get("text") or raw.get("description") or ""
-            images = raw.get("images") or raw.get("image_urls") or []
-            # ensure images is list of strings
-            images = [str(u) for u in images if u]
+            text = raw.get("text") or raw.get("description") or str(raw)
+            # Ensure we extract a usable image string if the tool provides one
+            image_url = raw.get("images") or raw.get("image_urls")
             final_text = f"Visual Scan Result: {text}\nUser Question: {message}\nAnswer the user."
-            explanation = await run_agent_safe(final_text)
-            return {"response": explanation, "images": images}
         else:
             txt = str(raw)
-            final = f"Visual Scan Result: {txt}\nUser Question: {message}\nAnswer the user."
-            explanation = await run_agent_safe(final)
-            return {"response": explanation, "images": []}
+            final_text = f"Visual Scan Result: {txt}\nUser Question: {message}\nAnswer the user."
+
+        explanation = await run_agent_safe(final_text)
+
+        # 4. RETURN THE IMAGE TO THE FRONTEND
+        # Since we don't have a permanent cloud storage bucket for this demo,
+        # we will return the SAME image data back to the frontend as a base64 string
+        # so it can display it.
+        
+        # Read file bytes
+        with open(temp_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        # Create a data URL
+        data_url = f"data:image/jpeg;base64,{encoded_string}"
+        
+        # Return response with the image data URL
+        return {"response": explanation, "images": [data_url]}
+
     except Exception as e:
         print("ERROR /diagnose/vision:", e)
         traceback.print_exc()
